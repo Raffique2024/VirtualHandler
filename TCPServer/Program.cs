@@ -1,4 +1,4 @@
-﻿using System;
+﻿﻿using System;
 using System.Collections.Generic;
 using System.Net;
 using System.Net.Sockets;
@@ -57,6 +57,13 @@ static class Logger
     }
 }
 
+class TestSummary
+{
+    public string SiteNo { get; set; }
+    public string Barcode { get; set; }
+    public string Bin { get; set; }
+}
+
 class ODSServer
 {
     static TcpListener listener;
@@ -68,21 +75,17 @@ class ODSServer
     static readonly object dutLock = new();
     static HashSet<string> allowedIPs = new();
     static Dictionary<string, double> siteTemperatures = new();
+    static List<TestSummary> overallSummary = new();
+
+    static int configPort = 5000;
 
     static void Main()
     {
-        GenerateDUTList(5);
+        GenerateDUTList(25);
         LoadConfig();
 
-        int port = 5000;
-        try
-        {
-            port = configPort; // loaded from JSON
-        }
-        catch { }
-
-        Logger.Info($"[ODS Server] Listening on port {port}...");
-        listener = new TcpListener(IPAddress.Any, port);
+        Logger.Info($"[ODS Server] Listening on port {configPort}...");
+        listener = new TcpListener(IPAddress.Any, configPort);
         listener.Start();
 
         Thread acceptThread = new Thread(AcceptClients);
@@ -98,6 +101,8 @@ class ODSServer
         {
             foreach (var c in clientList) c.Close();
         }
+
+        PrintOverallSummary();
         Logger.Info("[ODS Server] Stopped.");
     }
 
@@ -117,8 +122,6 @@ class ODSServer
         }
         Logger.Info($"Generated {count} DUT entries.");
     }
-
-    static int configPort = 5000;
 
     static void LoadConfig()
     {
@@ -212,7 +215,7 @@ class ODSServer
     static string GetSiteNoFromIP(string ip)
     {
         string[] parts = ip.Split('.');
-        if (int.TryParse(parts[^1], out int siteNo))
+        if (parts.Length > 0 && int.TryParse(parts[^1], out int siteNo))
             return siteNo.ToString();
         return "0";
     }
@@ -221,7 +224,7 @@ class ODSServer
     {
         string trimmedCmd = command.TrimStart('$').Trim();
 
-        // Example: GetDUTInfo command
+        // GetDUTInfo
         if (trimmedCmd.StartsWith("<<") && trimmedCmd.Contains("%GetDUTInfo%"))
         {
             string siteNo = "";
@@ -238,7 +241,10 @@ class ODSServer
                 if (!ipDUTMap.ContainsKey(clientIP))
                 {
                     if (nextDUTIndex >= dutList.Count)
+                    {
+                        PrintOverallSummary();
                         return $"<<*%UID=LOTEND%*>>";
+                    }
 
                     var dut = dutList[nextDUTIndex++];
                     ipDUTMap[clientIP] = dut;
@@ -249,7 +255,7 @@ class ODSServer
             }
         }
 
-        // Handle SetTestResult
+        // SetTestResult
         if (trimmedCmd.StartsWith("<<*%SetTestResult%"))
         {
             string content = trimmedCmd.Substring("<<*%SetTestResult%".Length);
@@ -271,6 +277,12 @@ class ODSServer
                 if (ipDUTMap.TryGetValue(clientIP, out var assignedDUT) && bcd == assignedDUT.BCD)
                 {
                     Logger.Info($"[{clientIP}] [SetTestResult] BCD matched. BIN={bin}, BCD={bcd}");
+                    overallSummary.Add(new TestSummary
+                    {
+                        SiteNo = GetSiteNoFromIP(clientIP),
+                        Barcode = bcd,
+                        Bin = bin
+                    });
                     ipDUTMap.Remove(clientIP);
                     return "<<*%SETTESTRESULT%ACK>>";
                 }
@@ -356,5 +368,32 @@ class ODSServer
             "<<*%DisableTSD%*>>" => "<<*%DISABLETSD%ACK>>",
             _ => ">>UNKNOWN_COMMAND"
         };
+    }
+
+    static void PrintOverallSummary()
+    {
+        if (overallSummary.Count == 0)
+        {
+            Logger.Info("No test results to summarize.");
+            return;
+        }
+
+        Logger.Info("==== OVERALL TEST SUMMARY ====");
+        Logger.Info($"{"Site",-8} {"Barcode",-15} {"Bin",-5}");
+        Logger.Info(new string('-', 35));
+
+        foreach (var s in overallSummary)
+        {
+            Logger.Info($"{s.SiteNo,-8} {s.Barcode,-15} {s.Bin,-5}");
+        }
+
+        string summaryPath = "/home/thaiyal/Desktop/TCPIP/TCPIP/TCP_IP/TCPServer/Logs/OverallSummary.txt";
+        var sb = new StringBuilder();
+        sb.AppendLine("SiteNo,Barcode,Bin");
+        foreach (var s in overallSummary)
+            sb.AppendLine($"{s.SiteNo},{s.Barcode},{s.Bin}");
+        File.WriteAllText(summaryPath, sb.ToString());
+
+        Logger.Info($"Overall summary saved to {summaryPath}");
     }
 }
