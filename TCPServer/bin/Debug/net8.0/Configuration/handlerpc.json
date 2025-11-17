@@ -2,6 +2,7 @@
   "LotId": "DemoLot",
   "Units": 2,
   "port":5000,
+  "WorkingDirectory": "/home/thaiyal/Desktop/publish/SLTGroq/Groq_SLT_Automation/SLT_TestProgram/bin/package",
   "AcceptanceIp": [
     "172.17.0.2",
      "172.17.0.3",

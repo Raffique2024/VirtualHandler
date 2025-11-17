@@ -1,0 +1,3 @@
+SiteNo,Barcode,Bin
+3,MSFT0001,8113
+2,MSFT0002,8113
