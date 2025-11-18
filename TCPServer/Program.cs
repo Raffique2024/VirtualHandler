@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Net;
 using System.Net.Sockets;
@@ -40,6 +40,8 @@ class HandlerConfig
     public List<string> AcceptanceIp { get; set; }
     public int Port { get; set; } = 5000;
     public string WorkingDirectory { get; set; } = ProgramPaths.AppDir;
+
+    public List<string> SshHosts { get; set; } = new List<string>();
 }
 
 // -----------------------------------------------------------------------
@@ -211,24 +213,32 @@ class ODSServer
                 Logger.Warn($"SHA1 file not found: {sha1Path}");
             }
 
-            // Remove offending SSH key automatically
+            // Remove offending SSH keys for all hosts in config
             string sshKnownHosts = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".ssh", "known_hosts");
-            string removeKeyCmd = $"ssh-keygen -f '{sshKnownHosts}' -R '[localhost]:2222'";
 
-            Process removeKey = new Process();
-            removeKey.StartInfo.FileName = "/bin/bash";
-            removeKey.StartInfo.Arguments = $"-c \"{removeKeyCmd}\"";
-            removeKey.StartInfo.UseShellExecute = false;
-            removeKey.StartInfo.RedirectStandardOutput = true;
-            removeKey.StartInfo.RedirectStandardError = true;
-            removeKey.Start();
-            string removeOut = removeKey.StandardOutput.ReadToEnd();
-            string removeErr = removeKey.StandardError.ReadToEnd();
-            removeKey.WaitForExit();
+            if (config.SshHosts != null && config.SshHosts.Count > 0)
+            {
+                foreach (var host in config.SshHosts)
+                {
+                    string removeKeyCmd = $"ssh-keygen -f '{sshKnownHosts}' -R '[{host}]'";
 
-            if (!string.IsNullOrWhiteSpace(removeOut)) Logger.Info(removeOut);
-            if (!string.IsNullOrWhiteSpace(removeErr)) Logger.Warn(removeErr);
-            Logger.Info("Removed offending SSH key if it existed.");
+                    Process removeKey = new Process();
+                    removeKey.StartInfo.FileName = "/bin/bash";
+                    removeKey.StartInfo.Arguments = $"-c \"{removeKeyCmd}\"";
+                    removeKey.StartInfo.UseShellExecute = false;
+                    removeKey.StartInfo.RedirectStandardOutput = true;
+                    removeKey.StartInfo.RedirectStandardError = true;
+                    removeKey.Start();
+
+                    string removeOut = removeKey.StandardOutput.ReadToEnd();
+                    string removeErr = removeKey.StandardError.ReadToEnd();
+                    removeKey.WaitForExit();
+
+                    if (!string.IsNullOrWhiteSpace(removeOut)) Logger.Info(removeOut);
+                    if (!string.IsNullOrWhiteSpace(removeErr)) Logger.Warn(removeErr);
+                    Logger.Info($"Removed SSH key for host {host} if it existed.");
+                }
+            }
 
             // Execute copy_to_docker.sh
             Logger.Info("Executing copy_to_docker.sh...");
@@ -240,6 +250,7 @@ class ODSServer
             p.StartInfo.RedirectStandardOutput = true;
             p.StartInfo.RedirectStandardError = true;
 
+            // Disable strict host key checking
             p.StartInfo.Environment["SSH_OPTIONS"] = "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null";
 
             p.Start();
@@ -388,7 +399,7 @@ class ODSServer
                 {
                     if (nextDUTIndex >= dutList.Count)
                     {
-                        PrintOverallSummary(); 
+                       
                         return $"<<*%UID=LOTEND%*>>";
                     }
 
@@ -402,7 +413,7 @@ class ODSServer
             }
         }
 
-         if (trimmedCmd.Contains("%GetStatus%"))
+        if (trimmedCmd.Contains("%GetStatus%"))
         {
             int start = trimmedCmd.IndexOf("<<") + 2;
             int end = trimmedCmd.IndexOf('%', start);
@@ -493,7 +504,7 @@ class ODSServer
         return trimmedCmd switch
         {
             "<<*%GetID%*>>" => "<<*%GETID%MODEL=3200;SN=1234567;NAME=SLT001;SWVERSION=1.1.0.1>>",
-           "<<*%GetLotInfo%*>>" => "<<*%GETLOTINFO%LOTID=TY08;OPERATORID=0001>>",
+            "<<*%GetLotInfo%*>>" => "<<*%GETLOTINFO%LOTID=TY08;OPERATORID=0001>>",
             "<<*%GetHandlerStatus%*>>" => "<<*%GETHANDLERSTATUS%STATUS=CYCLE>>",
             "<<*%EnableTempLog%*>>" => "<<*%ENABLETEMPLOG%ACK>>",
             "<<*%DisableTempLog%*>>" => "<<*%DISABLETEMPLOG%ACK>>",

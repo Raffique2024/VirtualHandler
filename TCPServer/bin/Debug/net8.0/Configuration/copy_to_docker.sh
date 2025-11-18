@@ -11,14 +11,14 @@ if [[ -z "$JSON_FILE" ]]; then
     exit 1
 fi
 
-# === Read WorkingDirectory from json ===
+# === Read WorkingDirectory from json (source path on host) ===
 WORKDIR=$(jq -r '.WorkingDirectory' "$JSON_FILE")
 if [[ -z "$WORKDIR" || "$WORKDIR" == "null" ]]; then
     echo "WorkingDirectory missing in handlerpc.json"
     exit 1
 fi
 
-# === ZIP + SHA come from WorkingDirectory ===
+# === ZIP + SHA come from WorkingDirectory on host ===
 ZIP_FILE="$WORKDIR/SLT_TestProgram_release.zip"
 CHECKSUM_FILE="$WORKDIR/SLT_TestProgram_release.sha1"
 
@@ -30,17 +30,18 @@ if [[ ! -f "$ZIP_FILE" || ! -f "$CHECKSUM_FILE" ]]; then
     exit 1
 fi
 
-TARGET_DIR="$WORKDIR"
+# === Deployment directory inside Docker / remote host ===
+TARGET_DIR="/home/groq/Desktop/SLTGroq/Groq_SLT_Automation"
 UNZIP_DIR="$TARGET_DIR/SLT_TestProgram_release"
 
 SSH_USER="root"
 SSH_PASS="docker"
 
-# Comma-separated list of hosts with ports
-HOSTS="localhost:2223,localhost:2222"
+# === Load hosts from handlerpc.json ===
+HOSTS=$(jq -r '.SshHosts | join(",")' "$JSON_FILE")
 
 # Max parallel deployments
-MAX_PARALLEL=2
+MAX_PARALLEL=16
 
 # Allow docker containers to access host X11
 xhost +local:
@@ -75,15 +76,15 @@ deploy_to_host() {
 
     connect_retry $HOST $PORT || return
 
-    # Create target directory
+    # Create target directory inside Docker
     sshpass -p "$SSH_PASS" ssh -Y -o StrictHostKeyChecking=no -p $PORT $SSH_USER@$HOST \
         "mkdir -p '$TARGET_DIR'"
 
-    # Copy files
+    # Copy ZIP and SHA files from host to Docker
     sshpass -p "$SSH_PASS" scp -P $PORT "$ZIP_FILE" "$SSH_USER@$HOST:$TARGET_DIR/"
     sshpass -p "$SSH_PASS" scp -P $PORT "$CHECKSUM_FILE" "$SSH_USER@$HOST:$TARGET_DIR/"
 
-    # Run deployment on remote host
+    # Run deployment inside Docker
     sshpass -p "$SSH_PASS" ssh -Y -t -o StrictHostKeyChecking=no -p $PORT $SSH_USER@$HOST bash << EOF
 WORKDIR="$TARGET_DIR"
 ZIP_FILE="\$WORKDIR/$(basename "$ZIP_FILE")"
@@ -93,7 +94,6 @@ UNZIP_DIR="\$WORKDIR/SLT_TestProgram_release"
 cd "\$WORKDIR" || { echo "Cannot cd to \$WORKDIR"; exit 1; }
 
 echo "Verifying checksum..."
-# Extract only the hash from SHA1 file and verify
 SHA_EXPECTED=\$(cut -d ' ' -f1 "\$CHECKSUM_FILE")
 SHA_ACTUAL=\$(sha1sum "\$ZIP_FILE" | cut -d ' ' -f1)
 
@@ -114,7 +114,7 @@ if [ "\$SHA_EXPECTED" == "\$SHA_ACTUAL" ]; then
     echo "Unzipping new program..."
     unzip -o "\$ZIP_FILE" -d "\$UNZIP_DIR"
 
-    # Make LotStartProduction.sh executable
+    # Make script executable
     chmod +x "\$UNZIP_DIR/LotStartProduction.sh"
 
     echo "Starting program with GUI..."
@@ -144,3 +144,4 @@ done
 
 wait
 echo "All deployments completed."
+
